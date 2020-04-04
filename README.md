@@ -1,5 +1,4 @@
 # project
-# project
 
 -- Coordinating dependent threads
 -- ------------------------------
