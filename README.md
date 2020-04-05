@@ -6,5 +6,5 @@ The coordinating of the reading and writing happens so that the dependendy among
 
 The type of this variables is monadic and the chainig reflects the dependency.
 
-A way to implement this is to have two queues for each of those variables.
+A way to implement this is to have at least one queue for each of those variables.
 
