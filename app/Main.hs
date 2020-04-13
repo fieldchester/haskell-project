@@ -21,40 +21,55 @@ prog =  putStrLn "a ?" >>
 
 -- The Exceptions seem to be unable to get out of their IO. So we use StateT
 main :: IO ()
-main =  let run = runStateT program
-        in run ([Vars 0 0 0]) >>
+main =  let circles = runStateT $ circle 0
+        in circles ([Vars 0 0 0]) >>
         return ()
 
 data VarsType = Vars { var1 :: Int
-                       ,var2 :: Int
-                       ,var3 :: Int }
-
-instance Show VarsType where
-    show (Vars x y z) = (show x)++"-"++(show y)++"-"++(show z)
+                       , var2 :: Int
+                       , var3 :: Int
+                       }
+                        deriving Show
        
 type StateType = StateT [VarsType] IO ()
-
-program :: StateType
-program = circle 0
 
 circle :: Int -> StateType
 circle n
     | n >= 3      = lift $ putStrLn "End"
-    | otherwise   = t1 >> -- depends on t2's output
-                    t2 >> -- dempends on t3's output
-                    t3 >> -- dempends on t1's output
+    | otherwise   = t1 >> putStateLn >>
+                    t2 >> putStateLn >>
+                    t3 >> putStateLn >>
                     circle (n+1) 
 
-t1 = thread "a?" (\a -> \s -> Vars a        (var2 s) (var3 s))
-t2 = thread "b?" (\b -> \s -> Vars (var1 s) b        (var3 s))
-t3 = thread "c?" (\c -> \s -> Vars (var1 s) (var2 s) c       )
+-- \x -> x are the programs generating the output x which is also
+-- their new state
+t1 = thd "a?" $ thdPure1 (\x -> x)
+t2 = thd "b?" $ thdPure2 (\x -> x)
+t3 = thd "c?" $ thdPure3 (\x -> x)
 
-thread :: String -> (Int -> VarsType -> VarsType) -> StateType
-thread message new =
-                    lift (putStrLn message)           >>
-                    get                               >>= \sts ->
-                    lift getLine                      >>= \a' ->
-                    let st = last sts
-                    in modify (<> [new (read a') st]) >>      -- update State
-                    get                               >>= \sts' ->
-                    lift (putStrLn $ show sts')
+thdPure1 :: (Int -> Int) -> (Int -> VarsType -> VarsType)
+thdPure1 f = (\a -> \s -> Vars (f a)     (var2 s) (var3 s))
+
+thdPure2 :: (Int -> Int) -> (Int -> VarsType -> VarsType)
+thdPure2 f = (\b -> \s -> Vars (var1 s) (f b)    (var3 s)) 
+
+thdPure3 :: (Int -> Int) -> (Int -> VarsType -> VarsType)
+thdPure3 f = (\c -> \s -> Vars (var1 s) (var2 s) (f c)   ) 
+
+putStateLn :: StateType
+putStateLn = putStateVarLn var1 >> putStateVarLn var2 >> putStateVarLn var3
+
+putStateVarLn :: (VarsType -> Int) -> StateType
+putStateVarLn f =  get >>= \sts ->
+        lift (putStrLn $ show $ fmap f sts)
+
+thd ::  String ->
+        (Int -> VarsType -> VarsType) ->
+        StateType
+thd msg toSt' =
+        lift (putStrLn msg)                 >>
+        get                                 >>= \sts ->
+        lift getLine                        >>= \a' ->
+        let st = last $ sts
+        in modify (<> [toSt' (read a') st])
+
