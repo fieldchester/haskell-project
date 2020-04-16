@@ -21,33 +21,35 @@ prog =  putStrLn "a ?" >>
 
 -- The Exceptions seem to be unable to get out of their IO. So we use StateT
 -- Input- and programming sequences are decoupled
+-- The State is mutated for simpler handling
 main :: IO ()
 main =  let circles = runStateT $ circle 0
-        in circles ([Vars 1 1 1 0]) >>
+        in circles ([Vars 1 1 1 0 0]) >>
         return ()
 
 program1 :: Int -> Int
 program1 x = rem (x+1) 3
+-- program1 x = x+1
 program2 x = x+1
 program3 x = x+1
 
-t1 = run (prog1 program1) (contPred1 (\x ->  x <= 0)) $ cont1
-t2 = run (prog2 program2) (contPred2 (\x ->  x <= 0)) $ cont2
-t3 = run (prog3 program3) (contPred3 (\x ->  x <= 0)) $ cont3
+t1 = run 1 3 (prog1 program1) (isValueEmpty1 (\x ->  x <= 0)) $ cont1
+t2 = run 2 3 (prog2 program2) (isValueEmpty2 (\x ->  x <= 0)) $ cont2
+t3 = run 3 3 (prog3 program3) (isValueEmpty3 (\x ->  x <= 0)) $ cont3
 
-reset :: Int -> (VarsType -> VarsType)
-reset n
-    | n <= 1 = \s -> Vars 0         (var2 s) (var3 s) 1
-    | n == 2 = \s -> Vars (var1 s)  0        (var3 s) 1 
-    | n >= 3 = \s -> Vars (var1 s)  (var2 s)  0       1
+input :: Int -> (VarsType -> [VarsType])
+input n
+    | n <= 1 = \s -> [Vars 1         (var2 s) (var3 s) 0 1]
+    | n == 2 = \s -> [Vars (var1 s)  1        (var3 s) 0 2]
+    | n >= 3 = \s -> [Vars (var1 s)  (var2 s)  1       0 3]
 
 circle :: Int -> StateType
 circle n        
     | n > 0 &&
-      n < 6  
-                = t1 >>     putStateLn >> -- Chain the read dependencies.
-                  t2 >>     putStateLn >>
-                  t3 >>     putStateLn >>
+      n < 5     -- Chain the read dependencies with >>.
+                = t1  >>    putStateLn  >>
+                  t2  >>    putStateLn  >>
+                  t3  >>    putStateLn  >>
                   circle (n+1)
     | n == 0    = lift (putStrLn "Please hit any key 1 time, 2 times, ... to choose a thread for this input.") >>
                   circle (n+1)
@@ -57,55 +59,65 @@ circle n
 data VarsType = Vars { var1 :: Int
                        , var2 :: Int
                        , var3 :: Int
-                       , t :: Int -- type result 0, input 1, continuation 9
+                       , iC :: Int -- continuation, if iC is 1, then var1 was empty, 0: no continuation
+                       , iI :: Int -- input, if iI is 1, then var1 gets some input, 0: no input
                        }
                         deriving Show
 
 putStateLn :: StateType
-putStateLn =    putStateVarLn var1 >> putStateVarLn var2 >> putStateVarLn var3 >>
-                putStateVarLn t
+putStateLn =    lift (putStr $ "var1") >> putStateVarLn var1 >>
+                lift (putStr $ "var2") >> putStateVarLn var2 >>
+                lift (putStr $ "var3") >> putStateVarLn var3 >>
+                lift (putStr $ "cont") >> putStateVarLn iC >>
+                lift (putStr $ "inpt") >> putStateVarLn iI
        
 type StateType = StateT [VarsType] IO ()
 
-prog1 :: (Int -> Int) -> (VarsType -> VarsType)
-prog1 f     = \s -> Vars (f $ var1 s) (var2 s)     (var3 s)     0
-prog2 f     = \s -> Vars (var1 s)     (f $ var2 s) (var3 s)     0
-prog3 f     = \s -> Vars (var1 s)     (var2 s)     (f $ var3 s) 0 
+prog1 :: (Int -> Int) -> (VarsType -> [VarsType])
+prog1 f     = \s -> [Vars (f $ var1 s) (var2 s)     (var3 s)     0 1]
+prog2 f     = \s -> [Vars (var1 s)     (f $ var2 s) (var3 s)     0 2]
+prog3 f     = \s -> [Vars (var1 s)     (var2 s)     (f $ var3 s) 0 3]
 
 
-contPred1 :: (Int -> Bool) -> (VarsType -> Bool)
-contPred1 p = \s ->    p (var1 s)                                 
-contPred2 p = \s ->                  p (var2 s)                   
-contPred3 p = \s ->                              p (var3 s)       
+isValueEmpty1 :: (Int -> Bool) -> (VarsType -> Bool)
+isValueEmpty1 p = \s ->    p (var1 s)                                 
+isValueEmpty2 p = \s ->                  p (var2 s)                   
+isValueEmpty3 p = \s ->                              p (var3 s)       
 
 
-cont1 :: (VarsType -> VarsType)
-cont1       = \s -> Vars (var1 s)     (var2 s)     (var3 s)      9
-cont2       = \s -> Vars (var1 s)     (var2 s)     (var3 s)      9 
-cont3       = \s -> Vars (var1 s)     (var2 s)     (var3 s)      9
+cont1 :: (VarsType -> [VarsType])
+cont1       = \s -> [Vars (var1 s)     (var2 s)     (var3 s)      1 0]
+cont2       = \s -> [Vars (var1 s)     (var2 s)     (var3 s)      2 0]
+cont3       = \s -> [Vars (var1 s)     (var2 s)     (var3 s)      3 0]
 
 
 putStateVarLn :: (VarsType -> Int) -> StateType
 putStateVarLn f =  get >>= \sts ->
         lift (putStrLn $ show $ fmap f sts)
 
-
-run ::  (VarsType -> VarsType) ->
+-- [Varstype]: [Input Continuation] or -- [Input Continuation Input] or [Input Continuation Input Input] ...
+run ::  Int ->  -- index of thread
+        Int ->  -- total quantity of threads
+        (VarsType -> [VarsType]) ->
         (VarsType -> Bool) ->
-        (VarsType -> VarsType) ->
+        (VarsType -> [VarsType]) ->
         StateType
-run prog contP cont =
-    lift (putStrLn "-----") >>
+run this n prog isValueEmpty cont =
+    lift (putStrLn "-------") >>
     get                     >>= \sts ->
-    let curr = last sts
-        is = contP curr     -- is this a continuation?
-    in  let curr' = curr
-        in case is of
-            False   ->  modify (<> [prog curr'])
-            _       ->  modify (<> [cont curr'])        >> -- cont
-                        lift (putStrLn "tap x times")   >>
-                        lift getLine                    >>= \x ->
-                        let lgth = length x
-                        in lift (putStrLn $ show lgth)  >> -- input
-                        modify (<> [reset lgth curr'])
-    -- The idea now is to proceed according to what COULD happen.
+    case pending sts of
+        False ->    case isValueEmpty $ head sts of
+                        False ->    put (prog $ head sts) >> lift (putStrLn "-i") -- do a computation
+                        _ ->        modify (<> (cont $ head sts)) >> lift (putStrLn "ic") -- place a continuation
+        _ ->        lift (putStrLn $ "--thread "++ show this) >> -- each of the following threads can write
+                    lift getLine    >>= \s ->    
+                    case delta (this - length s) n of
+                        0 ->    put (prog $ head sts) >> lift (putStrLn "-resolve pending") -- resolve pending
+                        n ->    pend n
+
+pend :: Int -> StateType
+pend n = pendHelp 1 n where
+  pendHelp i n
+    | i <= n =      lift (putStrLn $ "pend"++ show i++" of "++ show n) >>
+                    pendHelp (i+1) n
+    | otherwise =   lift $ putStr $ ""
